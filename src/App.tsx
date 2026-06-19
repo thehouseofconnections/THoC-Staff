@@ -38,6 +38,7 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
     }
     
     var sheetId = data.sheetId || "";
+    var tabName = data.tabName || data.sheetName || "";
     var ticket = data.ticket || data.ticketNo || "";
     var eventCode = data.eventCode || "";
     var action = data.action || "checkin";
@@ -53,20 +54,86 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
       }
     }
     
-    if (!sheetId || !ticket) {
+    if (!sheetId) {
       return ContentService.createTextOutput(JSON.stringify({ 
         success: false,
         valid: false, 
         status: "ERROR",
-        reason: "missing_parameters",
-        message: "Missing parameter: Sheet ID and Ticket Number are required."
+        reason: "missing_sheet_id",
+        message: "Spreadsheet ID is missing in request. Please configure it in settings first."
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (action === "fetch_sheets" || action === "get_sheets" || action === "fetch_tabs") {
+      var ssList;
+      try {
+        ssList = SpreadsheetApp.openById(sheetId);
+      } catch (err) {
+        return ContentService.createTextOutput(JSON.stringify({
+          success: false,
+          valid: false,
+          status: "ERROR",
+          reason: "invalid_sheet_id",
+          message: "Unable to open Google Sheet. Please confirm your Master Spreadsheet ID is valid."
+        })).setMimeType(ContentService.MimeType.JSON);
+      }
+      var sheetsList = ssList.getSheets();
+      var tabNamesList = [];
+      for (var i = 0; i < sheetsList.length; i++) {
+        tabNamesList.push(sheetsList[i].getName());
+      }
+      return ContentService.createTextOutput(JSON.stringify({
+        success: true,
+        sheets: tabNamesList,
+        tabs: tabNamesList
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (!tabName) {
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: false,
+        valid: false, 
+        status: "ERROR",
+        reason: "missing_tab_name",
+        message: "Sheet Tab Name is required for query. QR payload is missing a Tab Name middle segment."
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    if (!ticket) {
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: false,
+        valid: false, 
+        status: "ERROR",
+        reason: "missing_ticket",
+        message: "Ticket number is missing in the request."
       })).setMimeType(ContentService.MimeType.JSON);
     }
     
-    var ss = SpreadsheetApp.openById(sheetId);
-    var sheet = ss.getSheetByName("Sheet1") || ss.getSheetByName("Sheet 1") || ss.getSheets()[0];
+    var ss;
+    try {
+      ss = SpreadsheetApp.openById(sheetId);
+    } catch (ssErr) {
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: false,
+        valid: false, 
+        status: "ERROR",
+        reason: "invalid_sheet_id",
+        message: "Unable to open Google Sheet. Please confirm your Master Spreadsheet ID is valid and sharing permissions allow access."
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+
+    var sheet = ss.getSheetByName(tabName);
+    if (!sheet) {
+      return ContentService.createTextOutput(JSON.stringify({ 
+        success: false,
+        valid: false, 
+        status: "ERROR",
+        reason: "tab_not_found",
+        message: "Spreadsheet Tab '" + tabName + "' was not found inside the Master Spreadsheet. Please create this tab or check spelling."
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
     
-    // Auto-bootstrap headers if empty
+    // Read range
     var range = sheet.getDataRange();
     var values = range.getValues();
     if (values.length === 0 || (values.length === 1 && values[0].length === 1 && !values[0][0])) {
@@ -83,27 +150,52 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
     var eventCol = -1;
     var nameCol = -1;
     
-    // Match headers case-insensitively and flexibly
+    // Match headers case-insensitively dynamically
     for (var i = 0; i < headers.length; i++) {
       if (headers[i] === undefined || headers[i] === null) continue;
       
-      var hRaw = headers[i].toString().trim();
+      var hRaw = headers[i].toString().replace(/[\s\u00A0]+/g, ' ').trim();
       var hClean = hRaw.toUpperCase();
       var hAlpha = hRaw.toLowerCase().replace(/[^a-z0-9]/g, '');
       
-      if (hClean === "TICKET NO" || hAlpha === "ticketno" || hAlpha === "ticket" || hAlpha === "ticketnumber" || hAlpha === "barcode" || hAlpha === "ticketid" || hAlpha === "code") {
+      if (hClean === "TICKET NO" || hClean === "TICKET NO." || hClean === "TICKET #" || 
+          hAlpha === "ticketno" || hAlpha === "ticket" || hAlpha === "ticketnumber" || 
+          hAlpha === "barcode" || hAlpha === "ticketid" || hAlpha === "code" || 
+          hAlpha === "ticketcode" || hAlpha === "qrcode" || hAlpha === "qr") {
         ticketCol = i;
-      } else if (hClean === "STATUS" || hAlpha === "status" || hAlpha === "state" || hAlpha === "used" || hAlpha === "checkedin") {
+      } else if (hClean === "STATUS" || hAlpha === "status" || hAlpha === "state" || 
+                 hAlpha === "used" || hAlpha === "checkedin" || hAlpha === "checkin" || 
+                 hAlpha === "attended" || hAlpha === "present" || hAlpha === "arrived") {
         statusCol = i;
-      } else if (hClean === "EVENT CODE" || hAlpha === "eventcode" || hAlpha === "codeid") {
+      } else if (hClean === "EVENT CODE" || hClean === "EVENTCODE" || hAlpha === "eventcode" || hAlpha === "codeid") {
         eventCodeCol = i;
-      } else if (hClean === "CHECK IN TIME" || hClean === "CHECKINTIME" || hAlpha === "checkintime" || hAlpha === "checkin") {
+      } else if (hClean === "CHECK IN TIME" || hClean === "CHECKINTIME" || 
+                 hAlpha === "checkintime" || hAlpha === "checkin" || hAlpha === "time" || 
+                 hAlpha === "timestamp" || hAlpha === "checkedintime") {
         checkInCol = i;
       } else if (hClean === "EVENT" || hAlpha === "event" || hAlpha === "eventname") {
         eventCol = i;
-      } else if (hClean === "NAME" || hAlpha === "name" || hAlpha === "guestname" || hAlpha === "guest" || hAlpha === "nama") {
+      } else if (hClean === "NAME" || hClean === "GUEST NAME" || hAlpha === "name" || 
+                 hAlpha === "guestname" || hAlpha === "fullname" || hAlpha === "guest" || 
+                 hAlpha === "nama" || hAlpha === "customer" || hAlpha === "client" || 
+                 hAlpha === "attendee" || hAlpha === "attendeename") {
         nameCol = i;
       }
+    }
+
+    // Fallback: search for any column names that resemble or contain "ticket", "code", "no", "id", or default to first column
+    if (ticketCol === -1) {
+      for (var i = 0; i < headers.length; i++) {
+        if (headers[i] === undefined || headers[i] === null) continue;
+        var hAlpha2 = headers[i].toString().toLowerCase().replace(/[^a-z0-9]/g, '');
+        if (hAlpha2.indexOf("ticket") !== -1 || hAlpha2 === "id" || hAlpha2 === "no" || hAlpha2 === "num" || hAlpha2 === "number" || hAlpha2 === "code") {
+          ticketCol = i;
+          break;
+        }
+      }
+    }
+    if (ticketCol === -1 && headers.length > 0) {
+      ticketCol = 0;
     }
     
     // Auto-heal missing required check-in fields
@@ -111,13 +203,12 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
     var headersModified = false;
     
     if (ticketCol === -1) {
-      // If absolutely no ticket column is found, search first column or throw
       return ContentService.createTextOutput(JSON.stringify({ 
         success: false,
         valid: false, 
         status: "ERROR",
-        reason: "missing_headers",
-        message: "Spreadsheet is missing a Ticket Number column. Please ensure Row 1 has a header named 'Ticket No'."
+        reason: "missing_ticket_header",
+        message: "Spreadsheet Tab '" + tabName + "' is missing any identifier column. Please ensure Row 1 has a ticket column."
       })).setMimeType(ContentService.MimeType.JSON);
     }
     
@@ -135,60 +226,40 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
       headersModified = true;
     }
     
-    if (eventCodeCol === -1) {
-      nextColIndex++;
-      sheet.getRange(1, nextColIndex).setValue("Event Code");
-      eventCodeCol = nextColIndex - 1;
-      headersModified = true;
-    }
-    
     if (headersModified) {
-      // Re-read updated values to account for newly appended columns
       values = sheet.getDataRange().getValues();
     }
     
     var foundRow = -1;
     var partialMatchReason = "";
     
-    // Clean search criteria
-    var searchTicketClean = ticket.toString().trim().toLowerCase().replace(/[^a-z0-9]/g, '');
-    var searchEventCodeClean = eventCode.toString().trim().toLowerCase().replace(/[^a-z0-9]/g, '');
+    // Parse ticket code using standard replacements
+    var searchTicketClean = ticket.toString().replace(/[\s\u00A0]+/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+    var searchEventCodeClean = eventCode.toString().replace(/[\s\u00A0]+/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
     
     for (var r = 1; r < values.length; r++) {
       if (values[r][ticketCol] === undefined || values[r][ticketCol] === null) continue;
       
-      var rowTicketVal = values[r][ticketCol].toString().trim();
-      var rowTicketClean = rowTicketVal.toLowerCase().replace(/[^a-z0-9]/g, '');
+      var rowTicketVal = values[r][ticketCol].toString().replace(/[\s\u00A0]+/g, ' ').trim();
       
-      // Smart and robust ticket matching
+      // Auto-strip trailing .0 from Google Sheets whole-number formatting (e.g. 12345.0 -> 12345)
+      if (rowTicketVal.indexOf(".0") === rowTicketVal.length - 2 && rowTicketVal.length > 2) {
+        rowTicketVal = rowTicketVal.substring(0, rowTicketVal.length - 2);
+      }
+      
+      var rowTicketClean = rowTicketVal.replace(/[\s\u00A0]+/g, '').toLowerCase().replace(/[^a-z0-9]/g, '');
+      
       var matchFound = (rowTicketClean === searchTicketClean);
       
-      // Secondary check: Exact match after trimming
       if (!matchFound && rowTicketVal.toLowerCase() === ticket.toString().trim().toLowerCase()) {
         matchFound = true;
       }
       
-      // Third check: Strip "thoc" prefix (case insensitive)
+      // Representation equivalence for integers with leading zeroes (e.g. "00155" matches "155")
       if (!matchFound) {
-        var rStrip = rowTicketClean.replace(/^thoc/g, '');
-        var sStrip = searchTicketClean.replace(/^thoc/g, '');
-        if (rStrip && sStrip && rStrip === sStrip) {
-          matchFound = true;
-        }
-      }
-      
-      // Fourth check: substring contains (if both >= 5 characters)
-      if (!matchFound && rowTicketClean.length >= 5 && searchTicketClean.length >= 5) {
-        if (rowTicketClean.indexOf(searchTicketClean) !== -1 || searchTicketClean.indexOf(rowTicketClean) !== -1) {
-          matchFound = true;
-        }
-      }
-      
-      // Fifth check: Direct numeric comparison if applicable
-      if (!matchFound) {
-        var cellNum = Number(rowTicketVal);
-        var searchNum = Number(ticket);
-        if (!isNaN(cellNum) && !isNaN(searchNum) && cellNum === searchNum) {
+        var rowNum = parseInt(rowTicketClean, 10);
+        var searchNum = parseInt(searchTicketClean, 10);
+        if (!isNaN(rowNum) && !isNaN(searchNum) && rowNum === searchNum && rowTicketClean.match(/^[0-9]+$/) && searchTicketClean.match(/^[0-9]+$/)) {
           matchFound = true;
         }
       }
@@ -201,8 +272,8 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
         var rowEventCodeClean = rowEventCodeVal.toLowerCase().replace(/[^a-z0-9]/g, '');
         
         if (searchEventCodeClean && rowEventCodeClean && rowEventCodeClean !== searchEventCodeClean) {
-          partialMatchReason = "Ticket found but belongs to Event Code '" + rowEventCodeVal + "' instead of scanned '" + eventCode + "'.";
-          continue; // Mismatch event. Continue checking.
+          partialMatchReason = "Ticket found inside '" + tabName + "' but belongs to Event Code '" + rowEventCodeVal + "' instead of scanned event '" + eventCode + "'.";
+          continue;
         }
         
         foundRow = r;
@@ -211,7 +282,7 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
     }
     
     if (foundRow === -1) {
-      var failMsg = partialMatchReason || ("Ticket code '" + ticket + "' was not found in the spreadsheet.");
+      var failMsg = partialMatchReason || ("Ticket Number '" + ticket + "' was not found inside spreadsheet tab '" + tabName + "'. Ensure you are checking the correct gate/tab.");
       return ContentService.createTextOutput(JSON.stringify({ 
         success: false,
         valid: false, 
@@ -242,6 +313,7 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
         eventCode: eventCodeVal,
         event: eventVal,
         eventName: eventVal,
+        tabName: tabName,
         checkInTime: checkInTimeVal || "Already checked in"
       })).setMimeType(ContentService.MimeType.JSON);
     }
@@ -264,6 +336,7 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
         eventCode: eventCodeVal,
         event: eventVal,
         eventName: eventVal,
+        tabName: tabName,
         checkInTime: checkInTimeVal ? checkInTimeVal.toString() : ""
       })).setMimeType(ContentService.MimeType.JSON);
     }
@@ -282,6 +355,7 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
       eventCode: eventCodeVal,
       event: eventVal,
       eventName: eventVal,
+      tabName: tabName,
       checkInTime: checkinTime
     })).setMimeType(ContentService.MimeType.JSON);
     
@@ -292,6 +366,48 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
       status: "ERROR",
       reason: "error", 
       message: error.toString() 
+    })).setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doGet(e) {
+  try {
+    var sheetId = "";
+    if (e && e.parameter) {
+      sheetId = e.parameter.sheetId || e.parameter.spreadsheetId || "";
+    }
+    
+    if (sheetId.indexOf("http") === 0 || sheetId.indexOf("docs.google.com") !== -1) {
+      var matches = sheetId.match(/\\/d\\/([a-zA-Z0-9-_]+)\\//);
+      if (!matches) {
+        matches = sheetId.match(/\\/d\\/([a-zA-Z0-9-_]+)/);
+      }
+      if (matches && matches[1]) {
+        sheetId = matches[1];
+      }
+    }
+    
+    if (!sheetId) {
+      return ContentService.createTextOutput(JSON.stringify({
+        status: "ONLINE"
+      })).setMimeType(ContentService.MimeType.JSON);
+    }
+    
+    var ss = SpreadsheetApp.openById(sheetId);
+    var sheets = ss.getSheets();
+    var tabNames = [];
+    for (var i = 0; i < sheets.length; i++) {
+      tabNames.push(sheets[i].getName());
+    }
+    return ContentService.createTextOutput(JSON.stringify({
+      success: true,
+      sheets: tabNames,
+      tabs: tabNames
+    })).setMimeType(ContentService.MimeType.JSON);
+  } catch (err) {
+    return ContentService.createTextOutput(JSON.stringify({
+      success: false,
+      message: err.toString()
     })).setMimeType(ContentService.MimeType.JSON);
   }
 }`;
@@ -310,9 +426,84 @@ export default function App() {
   const [scriptUrl, setScriptUrl] = useState<string>(() => {
     return localStorage.getItem("thoc_script_url") || "https://script.google.com/macros/s/AKfycby1rbBYT2vUVUDJChRRwe4lipjLqxur1OQfCCCfKF0uaNT3gl8NlXzIIQhgotxZuenw/exec";
   });
+  const [fallbackTabName, setFallbackTabName] = useState<string>(() => {
+    return localStorage.getItem("thoc_fallback_tab_name") || "Stranger_People";
+  });
+
+  const [constructorTabName, setConstructorTabName] = useState<string>("Stranger_People");
+
+  const [fetchedSheetTabs, setFetchedSheetTabs] = useState<string[]>(() => {
+    try {
+      const stored = localStorage.getItem("thoc_fetched_sheet_tabs");
+      return stored ? JSON.parse(stored) : ["Stranger_People", "Stranger_Creators", "Pickleball_People", "Pickleball_Creators", "Volunteers", "Sponsors"];
+    } catch {
+      return ["Stranger_People", "Stranger_Creators", "Pickleball_People", "Pickleball_Creators", "Volunteers", "Sponsors"];
+    }
+  });
+
+  const [isFetchingSheets, setIsFetchingSheets] = useState<boolean>(false);
+
+  // Async sheet tabs loader
+  const fetchSheetNamesFromSpreadsheet = async (explicitSheetId?: string) => {
+    const targetSheetId = (explicitSheetId || sheetId || "").trim();
+    if (!targetSheetId) {
+      showToastNotification("Configure and Save Spreadsheet ID first!");
+      return;
+    }
+
+    setIsFetchingSheets(true);
+    showToastNotification("Querying Google Sheet tabs...");
+
+    const targetUrl = scriptUrl || "https://script.google.com/macros/s/AKfycby1rbBYT2vUVUDJChRRwe4lipjLqxur1OQfCCCfKF0uaNT3gl8NlXzIIQhgotxZuenw/exec";
+    
+    try {
+      const response = await fetch(targetUrl, {
+        method: "POST",
+        headers: {
+          "Content-Type": "text/plain"
+        },
+        body: JSON.stringify({
+          sheetId: targetSheetId,
+          action: "fetch_sheets"
+        })
+      });
+
+      if (!response.ok) {
+        throw new Error(`HTTP error code ${response.status}`);
+      }
+
+      const txt = await response.text();
+      let resData;
+      try {
+        resData = JSON.parse(txt);
+      } catch (e) {
+        throw new Error("Unable to parse result payload as JSON. Deploy updated Apps Script first.");
+      }
+
+      if (resData && resData.success && (resData.sheets || resData.tabs)) {
+        const tabs = resData.sheets || resData.tabs;
+        if (Array.isArray(tabs) && tabs.length > 0) {
+          setFetchedSheetTabs(tabs);
+          localStorage.setItem("thoc_fetched_sheet_tabs", JSON.stringify(tabs));
+          showToastNotification(`Successfully fetched ${tabs.length} sheet tabs!`);
+          return tabs;
+        } else {
+          showToastNotification("Google Spreadsheet has no sheet tabs.");
+        }
+      } else {
+        const msg = resData?.message || "Failed to fetch. Confirm Apps Script is updated and Spreadsheet is shared.";
+        showToastNotification(msg);
+      }
+    } catch (err: any) {
+      console.error(err);
+      showToastNotification(`Fetch Failed: ${err.message || err.toString()}`);
+    } finally {
+      setIsFetchingSheets(false);
+    }
+  };
 
   // Save Configs to localStorage
-  const saveConfiguration = (name: string, codeVal: string, sheetIdVal: string, scriptUrlVal: string) => {
+  const saveConfiguration = (name: string, codeVal: string, sheetIdVal: string, scriptUrlVal: string, fallbackTabVal: string) => {
     let cleanSheetId = sheetIdVal.trim();
     if (cleanSheetId.includes("docs.google.com")) {
       const match = cleanSheetId.match(/\/d\/([a-zA-Z0-9-_]+)/);
@@ -325,13 +516,15 @@ export default function App() {
     localStorage.setItem("thoc_event_code", codeVal);
     localStorage.setItem("thoc_sheet_id", cleanSheetId);
     localStorage.setItem("thoc_script_url", scriptUrlVal.trim());
+    localStorage.setItem("thoc_fallback_tab_name", fallbackTabVal.trim());
     
     setEventName(name);
     setEventCode(codeVal);
     setSheetId(cleanSheetId);
     setScriptUrl(scriptUrlVal.trim());
+    setFallbackTabName(fallbackTabVal.trim());
     
-    showToastNotification("Configuration Saved Perfectly");
+    showToastNotification("Configuration Saved Directly");
   };
 
   // --- ACTIVE VIEW TAB ---
@@ -490,6 +683,8 @@ export default function App() {
       let response;
       const payload = {
         sheetId: sheetId,
+        tabName: constructorTabName,
+        sheetName: constructorTabName,
         eventCode: eventCode,
         ticket: code,
         ticketNo: code,
@@ -636,22 +831,29 @@ export default function App() {
     setValidationState("validating");
 
     // Split the QR string by "|"
-    // EVENTCODE|TICKETNUMBER
+    // EVENT_CODE|TAB_NAME|TICKET_NO
     let eventCodePart = "";
+    let tabNamePart = "";
     let ticketNoPart = "";
     
     if (formattedCode.includes("|")) {
       const parts = formattedCode.split("|");
-      eventCodePart = parts[0]?.trim() || "";
-      ticketNoPart = parts[1]?.trim() || "";
-    } else {
-      // In case there is no pipe, use configured eventCode from settings ONLY if it is not the default "STRANGER-2026"
-      // This prevents annoying mismatch errors if the user has different or omitted event codes in their spreadsheet.
-      if (eventCode && eventCode.trim() !== "STRANGER-2026") {
-        eventCodePart = eventCode.trim();
+      if (parts.length >= 3) {
+        eventCodePart = parts[0]?.trim() || "";
+        tabNamePart = parts[1]?.trim() || "";
+        ticketNoPart = parts[2]?.trim() || "";
+      } else if (parts.length === 2) {
+        eventCodePart = parts[0]?.trim() || "";
+        tabNamePart = fallbackTabName; // default/fallback sheet tab name from settings
+        ticketNoPart = parts[1]?.trim() || "";
       } else {
-        eventCodePart = "";
+        eventCodePart = eventCode;
+        tabNamePart = fallbackTabName;
+        ticketNoPart = parts[0]?.trim() || "";
       }
+    } else {
+      eventCodePart = eventCode;
+      tabNamePart = fallbackTabName;
       ticketNoPart = formattedCode;
     }
 
@@ -661,14 +863,15 @@ export default function App() {
       eventCode: eventCodePart || eventCode || "STRANGER-2026",
       ticketCode: ticketNoPart,
       isValid: true,
-      validationText: "Authenticating QR with event roster list",
+      validationText: `Split: Event "${eventCodePart || eventCode}" | Tab "${tabNamePart}" | Ticket "${ticketNoPart}"`,
       isManual: isManualInput,
       statusText: "Validating..."
     };
     setScanResult(parsed);
     setValidationDetails({
       eventCode: eventCodePart || eventCode || "STRANGER-2026",
-      ticket: ticketNoPart
+      ticket: ticketNoPart,
+      tabName: tabNamePart
     });
 
     const targetUrl = scriptUrl || "https://script.google.com/macros/s/AKfycby1rbBYT2vUVUDJChRRwe4lipjLqxur1OQfCCCfKF0uaNT3gl8NlXzIIQhgotxZuenw/exec";
@@ -684,6 +887,8 @@ export default function App() {
           },
           body: JSON.stringify({
             sheetId: sheetId,
+            tabName: tabNamePart,
+            sheetName: tabNamePart,
             eventCode: eventCodePart,
             ticket: ticketNoPart,
             ticketNo: ticketNoPart,
@@ -700,6 +905,8 @@ export default function App() {
           },
           body: JSON.stringify({
             sheetId: sheetId,
+            tabName: tabNamePart,
+            sheetName: tabNamePart,
             eventCode: eventCodePart,
             ticket: ticketNoPart,
             ticketNo: ticketNoPart,
@@ -731,6 +938,7 @@ export default function App() {
       const respTicketNo = resData.ticketNo || resData.ticket_no || resData.ticketNumber || resData.ticketCode || resData.ticket || ticketNoPart;
       const respEventCode = resData.eventCode || resData.event_code || eventCodePart;
       const respCheckInTime = resData.checkInTime || resData.check_in_time || resData.time || resData.timestamp || currentTime;
+      const respTabName = resData.tabName || resData.sheetName || tabNamePart;
 
       // Handle exact response mappings defined in instructions & user's script
       const isValid = resData.valid === true || resData.success === true;
@@ -747,6 +955,7 @@ export default function App() {
           name: guestName || "Guest",
           ticket: respTicketNo,
           eventCode: respEventCode,
+          tabName: respTabName,
           time: respCheckInTime,
           status: "APPROVED"
         });
@@ -756,6 +965,7 @@ export default function App() {
           name: guestName || "Guest",
           ticket: respTicketNo,
           eventCode: respEventCode,
+          tabName: respTabName,
           time: respCheckInTime,
           status: "USED"
         });
@@ -765,9 +975,10 @@ export default function App() {
           name: guestName || "",
           ticket: respTicketNo,
           eventCode: respEventCode,
+          tabName: respTabName,
           time: respCheckInTime,
           status: "INVALID",
-          reason: resData.reason || resData.message || "Ticket not found or event/header mismatch in spreadsheet."
+          reason: resData.reason || resData.message || "Ticket not found or custom spreadsheet header mismatch."
         });
       }
     } catch (err: any) {
@@ -809,8 +1020,8 @@ export default function App() {
     setIsGenerating(true);
     
     try {
-      // Encode with prefix: EVENT_CODE|TICKET_NUMBER
-      const qrDataString = `${eventCode}|${formatted}`;
+      // Encode with standard luxury triple segment format: EVENT_CODE|TAB_NAME|TICKET_NUMBER
+      const qrDataString = `${eventCode.trim()}|${constructorTabName.trim()}|${formatted}`;
 
       const dataUrl = await QRCode.toDataURL(qrDataString, {
         width: 380,
@@ -1028,6 +1239,15 @@ export default function App() {
                             {validationDetails.time}
                           </span>
                         </div>
+
+                        {validationDetails.tabName && (
+                          <div className="flex justify-between items-baseline border-t border-zinc-900/60 pt-2 text-left">
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Spreadsheet Tab (Tier)</span>
+                            <span className="text-xs text-stone-300 font-semibold uppercase tracking-wider bg-zinc-905 px-2 py-0.5 rounded border border-zinc-850">
+                              {validationDetails.tabName}
+                            </span>
+                          </div>
+                        )}
                       </div>
 
                     </div>
@@ -1090,6 +1310,15 @@ export default function App() {
                             {validationDetails.ticket}
                           </span>
                         </div>
+
+                        {validationDetails.tabName && (
+                          <div className="flex justify-between items-baseline border-b border-zinc-900 pb-1.5 text-left">
+                            <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Spreadsheet Tab (Tier)</span>
+                            <span className="text-xs text-red-300 font-semibold uppercase tracking-wider bg-zinc-905 px-2 py-0.5 rounded border border-zinc-850">
+                              {validationDetails.tabName}
+                            </span>
+                          </div>
+                        )}
 
                         <div className="flex flex-col text-left gap-0.5">
                           <span className="text-[10px] text-zinc-500 uppercase tracking-wider">Original Gate Scan</span>
@@ -1397,6 +1626,56 @@ export default function App() {
                 </div>
 
                 <div>
+                  <div className="flex justify-between items-center mb-1">
+                    <label className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase block">
+                      Spreadsheet Tab (Tier) <span className="text-red-500/80">*</span>
+                    </label>
+                    <button
+                      type="button"
+                      onClick={() => fetchSheetNamesFromSpreadsheet()}
+                      disabled={isFetchingSheets}
+                      className="text-[9px] font-mono text-amber-500 hover:text-amber-400 flex items-center gap-1 active:scale-95 disabled:opacity-50 transition-all cursor-pointer"
+                      title="Fetch dynamic sheet names from active Spreadsheet"
+                    >
+                      <RefreshCw className={`w-2.5 h-2.5 ${isFetchingSheets ? 'animate-spin' : ''}`} />
+                      Fetch Tab List
+                    </button>
+                  </div>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      list="constructor-tabs-list"
+                      placeholder="e.g. Stranger_People"
+                      value={constructorTabName}
+                      onChange={(e) => setConstructorTabName(e.target.value)}
+                      className="w-full bg-zinc-950 border border-zinc-900 rounded-lg px-3 py-2 text-xs font-mono text-stone-200 tracking-wide focus:outline-none focus:border-zinc-700"
+                    />
+                    <datalist id="constructor-tabs-list">
+                      {fetchedSheetTabs.map(tab => (
+                        <option key={tab} value={tab} />
+                      ))}
+                    </datalist>
+                  </div>
+                  <div className="flex flex-wrap gap-1 mt-1.5">
+                    <span className="text-[8px] text-zinc-600 self-center">Presets:</span>
+                    {fetchedSheetTabs.map(preset => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setConstructorTabName(preset)}
+                        className={`text-[8px] font-mono px-1.5 py-0.5 rounded border transition-all ${
+                          constructorTabName === preset
+                            ? "bg-amber-950/40 text-amber-500 border-amber-900/40 font-bold"
+                            : "bg-zinc-950 text-zinc-500 border-zinc-900 hover:text-zinc-350"
+                        }`}
+                      >
+                        {preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
                   <label className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase block mb-1">
                     Strict Ticket Number <span className="text-red-500/80">*</span>
                   </label>
@@ -1500,6 +1779,12 @@ export default function App() {
                         {eventCode}
                       </span>
                     </div>
+                    <div className="flex justify-between">
+                      <span className="text-zinc-500">Sheet Tab:</span>
+                      <span className="text-stone-300 font-mono font-bold tracking-wider text-right uppercase">
+                        {constructorTabName}
+                      </span>
+                    </div>
                     {ticketNameInput && (
                       <div className="flex justify-between">
                         <span className="text-zinc-500">Holder:</span>
@@ -1513,9 +1798,9 @@ export default function App() {
                       </span>
                     </div>
                     <div className="flex flex-col text-left gap-1 border-t border-zinc-900 pt-2 text-[9px]">
-                      <span className="text-zinc-600 block uppercase font-bold tracking-wider">Raw Data:</span>
-                      <span className="text-zinc-400 font-bold break-all font-mono tracking-wider">
-                        {eventCode}|{inputTicket}
+                      <span className="text-zinc-600 block uppercase font-bold tracking-wider">Raw QR Data String:</span>
+                      <span className="text-amber-500 font-bold break-all font-mono tracking-widest">
+                        {eventCode}|{constructorTabName}|{inputTicket}
                       </span>
                     </div>
                   </div>
@@ -1631,6 +1916,76 @@ export default function App() {
 
                 <div>
                   <label className="text-[10px] font-mono uppercase text-zinc-500 block mb-1">
+                    Default Fallback Sheet Tab
+                  </label>
+                  <input
+                    type="text"
+                    id="conf-fallback-tab-name"
+                    list="conf-fallback-tabs-datalist"
+                    placeholder="e.g. Stranger_People"
+                    defaultValue={fallbackTabName}
+                    onChange={(e) => setFallbackTabName(e.target.value)}
+                    className="w-full bg-black border border-zinc-800 text-stone-200 text-xs px-3 py-2 rounded-lg focus:outline-none focus:border-zinc-500 font-mono"
+                  />
+                  <datalist id="conf-fallback-tabs-datalist">
+                    {fetchedSheetTabs.map(tab => (
+                      <option key={tab} value={tab} />
+                    ))}
+                  </datalist>
+                  <span className="text-[8px] text-zinc-600 block mt-1 tracking-wider leading-relaxed">
+                    The default tab to use when the scanned QR code does not contain a tab name middle segment (e.g. legacy/2-part QR codes). Examples: <code>Stranger_People</code>, <code>Stranger_Creators</code>, <code>Pickleball_People</code>, etc.
+                  </span>
+                </div>
+
+                {/* DYNAMIC SHETS/TABS FETCH PANEL */}
+                <div className="bg-zinc-950 border border-zinc-900 rounded-xl p-3.5 mt-2 space-y-2.5">
+                  <div className="flex justify-between items-center border-b border-zinc-900 pb-1.5">
+                    <h4 className="text-[11px] font-mono font-bold tracking-wider uppercase text-white">
+                      Live Spreadsheet Tabs
+                    </h4>
+                    <button
+                      type="button"
+                      onClick={() => fetchSheetNamesFromSpreadsheet()}
+                      disabled={isFetchingSheets}
+                      className="bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 hover:border-zinc-700 text-amber-500 font-mono text-[9px] px-2 py-0.5 rounded flex items-center gap-1 active:scale-95 transition-all cursor-pointer disabled:opacity-50"
+                    >
+                      <RefreshCw className={`w-2.5 h-2.5 ${isFetchingSheets ? 'animate-spin' : ''}`} />
+                      Fetch Tab Names
+                    </button>
+                  </div>
+                  
+                  <span className="text-[9px] text-zinc-500 block leading-normal font-mono">
+                    Dynamically pull tab/sheet names from your active master spreadsheet to synchronize with dynamic attendee groups. Custom write any sheets into form fields above.
+                  </span>
+
+                  <div className="flex flex-wrap gap-1 mt-1">
+                    {fetchedSheetTabs.map((tab) => (
+                      <button
+                        key={tab}
+                        type="button"
+                        onClick={() => {
+                          const elInput = document.getElementById("conf-fallback-tab-name") as HTMLInputElement;
+                          if (elInput) {
+                            elInput.value = tab;
+                          }
+                          setFallbackTabName(tab);
+                          localStorage.setItem("thoc_fallback_tab_name", tab);
+                          showToastNotification(`Set default fallback tab to "${tab}". Remember to Save Configuration below!`);
+                        }}
+                        className={`text-[8px] font-mono px-2 py-0.5 rounded border transition-all ${
+                          fallbackTabName === tab
+                            ? "bg-amber-955 text-amber-500 border-amber-900/40 font-bold"
+                            : "bg-zinc-950 text-zinc-500 border-zinc-900 hover:text-zinc-350"
+                        }`}
+                      >
+                        {tab} {fallbackTabName === tab ? "★" : ""}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-mono uppercase text-zinc-500 block mb-1">
                     Google Apps Script API Endpoint URL
                   </label>
                   <input
@@ -1652,11 +2007,13 @@ export default function App() {
                     const elCode = (document.getElementById("conf-event-code") as HTMLInputElement)?.value;
                     const elSheet = (document.getElementById("conf-sheet-id") as HTMLInputElement)?.value;
                     const elUrl = (document.getElementById("conf-script-url") as HTMLInputElement)?.value;
+                    const elFallbackTab = (document.getElementById("conf-fallback-tab-name") as HTMLInputElement)?.value;
                     saveConfiguration(
                       elName || "THE HOUSE OF CONNECTIONS Event",
                       elCode || "STRANGER-2026",
                       elSheet || "",
-                      elUrl || ""
+                      elUrl || "",
+                      elFallbackTab || "Stranger_People"
                     );
                   }}
                   className="w-full bg-white hover:bg-stone-200 text-black font-mono text-xs tracking-widest uppercase font-bold text-center py-2.5 rounded-lg border border-transparent mt-2 cursor-pointer transition-all"
