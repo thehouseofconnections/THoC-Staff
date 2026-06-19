@@ -1,0 +1,6 @@
+{
+  "name": "THOC Ticket Manager",
+  "description": "Premium event ticket manager for The House of Connections (THoC). Scan codes, validate check-ins with Google Sheets API, and generate custom-coded tickets.",
+  "requestFramePermissions": ["camera"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
