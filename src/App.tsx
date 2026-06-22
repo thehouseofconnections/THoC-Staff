@@ -150,7 +150,7 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
     var eventCol = -1;
     var nameCol = -1;
     
-    // Match headers case-insensitively dynamically
+    // Pass 1: Match strict/strong headers case-insensitively
     for (var i = 0; i < headers.length; i++) {
       if (headers[i] === undefined || headers[i] === null) continue;
       
@@ -159,27 +159,58 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
       var hAlpha = hRaw.toLowerCase().replace(/[^a-z0-9]/g, '');
       
       if (hClean === "TICKET NO" || hClean === "TICKET NO." || hClean === "TICKET #" || 
-          hAlpha === "ticketno" || hAlpha === "ticket" || hAlpha === "ticketnumber" || 
-          hAlpha === "barcode" || hAlpha === "ticketid" || hAlpha === "code" || 
-          hAlpha === "ticketcode" || hAlpha === "qrcode" || hAlpha === "qr") {
+          hAlpha === "ticketno" || hAlpha === "ticketnumber" || hAlpha === "ticketcode" || hAlpha === "ticketid") {
         ticketCol = i;
-      } else if (hClean === "STATUS" || hAlpha === "status" || hAlpha === "state" || 
-                 hAlpha === "used" || hAlpha === "checkedin" || hAlpha === "checkin" || 
-                 hAlpha === "attended" || hAlpha === "present" || hAlpha === "arrived") {
+      } else if (hClean === "STATUS" || hAlpha === "status" || hAlpha === "state" || hAlpha === "checkedin" || hAlpha === "checked-in") {
         statusCol = i;
-      } else if (hClean === "EVENT CODE" || hClean === "EVENTCODE" || hAlpha === "eventcode" || hAlpha === "codeid") {
+      } else if (hClean === "EVENT CODE" || hClean === "EVENTCODE" || hAlpha === "eventcode") {
         eventCodeCol = i;
-      } else if (hClean === "CHECK IN TIME" || hClean === "CHECKINTIME" || 
-                 hAlpha === "checkintime" || hAlpha === "checkin" || hAlpha === "time" || 
-                 hAlpha === "timestamp" || hAlpha === "checkedintime") {
+      } else if (hClean === "CHECK IN TIME" || hClean === "CHECKINTIME" || hAlpha === "checkintime" || hAlpha === "checkedintime") {
         checkInCol = i;
-      } else if (hClean === "EVENT" || hAlpha === "event" || hAlpha === "eventname") {
+      } else if (hClean === "EVENT" || hAlpha === "eventname") {
         eventCol = i;
-      } else if (hClean === "NAME" || hClean === "GUEST NAME" || hAlpha === "name" || 
-                 hAlpha === "guestname" || hAlpha === "fullname" || hAlpha === "guest" || 
-                 hAlpha === "nama" || hAlpha === "customer" || hAlpha === "client" || 
-                 hAlpha === "attendee" || hAlpha === "attendeename") {
+      } else if (hClean === "NAME" || hClean === "GUEST NAME" || hAlpha === "fullname" || hAlpha === "guestname" || hAlpha === "attendeename") {
         nameCol = i;
+      }
+    }
+
+    // Pass 2: Fallback to weaker/generic keywords ONLY if the column was not resolved in Pass 1
+    for (var i = 0; i < headers.length; i++) {
+      if (headers[i] === undefined || headers[i] === null) continue;
+      
+      var hRaw = headers[i].toString().replace(/[\s\u00A0]+/g, ' ').trim();
+      var hClean = hRaw.toUpperCase();
+      var hAlpha = hRaw.toLowerCase().replace(/[^a-z0-9]/g, '');
+      
+      if (ticketCol === -1) {
+        if (hAlpha === "ticket" || hAlpha === "barcode" || hAlpha === "code" || hAlpha === "qrcode" || hAlpha === "qr" || hAlpha === "ticketid") {
+          ticketCol = i;
+        }
+      }
+      if (statusCol === -1) {
+        if (hAlpha === "used" || hAlpha === "checkin" || hAlpha === "attended" || hAlpha === "present" || hAlpha === "arrived") {
+          statusCol = i;
+        }
+      }
+      if (eventCodeCol === -1) {
+        if (hAlpha === "codeid") {
+          eventCodeCol = i;
+        }
+      }
+      if (checkInCol === -1) {
+        if (hAlpha === "checkin" || hAlpha === "time" || hAlpha === "timestamp") {
+          checkInCol = i;
+        }
+      }
+      if (eventCol === -1) {
+        if (hAlpha === "event") {
+          eventCol = i;
+        }
+      }
+      if (nameCol === -1) {
+        if (hAlpha === "name" || hAlpha === "guest" || hAlpha === "nama" || hAlpha === "customer" || hAlpha === "client" || hAlpha === "attendee") {
+          nameCol = i;
+        }
       }
     }
 
@@ -503,7 +534,7 @@ export default function App() {
   };
 
   // Save Configs to localStorage
-  const saveConfiguration = (name: string, codeVal: string, sheetIdVal: string, scriptUrlVal: string, fallbackTabVal: string) => {
+  const saveConfiguration = (name: string, codeVal: string, sheetIdVal: string, scriptUrlVal: string, fallbackTabVal: string, cooldownVal?: number) => {
     let cleanSheetId = sheetIdVal.trim();
     if (cleanSheetId.includes("docs.google.com")) {
       const match = cleanSheetId.match(/\/d\/([a-zA-Z0-9-_]+)/);
@@ -517,6 +548,10 @@ export default function App() {
     localStorage.setItem("thoc_sheet_id", cleanSheetId);
     localStorage.setItem("thoc_script_url", scriptUrlVal.trim());
     localStorage.setItem("thoc_fallback_tab_name", fallbackTabVal.trim());
+    if (cooldownVal !== undefined) {
+      localStorage.setItem("thoc_cooldown_seconds", String(cooldownVal));
+      setCooldownSeconds(cooldownVal);
+    }
     
     setEventName(name);
     setEventCode(codeVal);
@@ -529,6 +564,24 @@ export default function App() {
 
   // --- ACTIVE VIEW TAB ---
   const [activeTab, setActiveTab] = useState<"scanner" | "generator" | "settings">("scanner");
+
+  // --- CONFIGURABLE COOLDOWN SYSTEM ---
+  const [cooldownSeconds, setCooldownSeconds] = useState<number>(() => {
+    try {
+      const stored = localStorage.getItem("thoc_cooldown_seconds");
+      return stored ? parseInt(stored, 10) : 4;
+    } catch {
+      return 4;
+    }
+  });
+
+  const [cooldownRemaining, setCooldownRemaining] = useState<number>(0);
+
+  // --- SCANNER LOCKS & TRACKING ---
+  const isProcessingRef = useRef<boolean>(false);
+  const lastScannedQRRef = useRef<string | null>(null);
+  const lastScanTimeRef = useRef<number>(0);
+  const wasCameraScanRef = useRef<boolean>(false);
 
   // --- SCANNER STATES ---
   const [isScanning, setIsScanning] = useState<boolean>(false);
@@ -546,6 +599,32 @@ export default function App() {
     reason?: string;
     errorMessage?: string;
   }>({});
+
+  // Cooldown countdown and auto-resume scan listener
+  useEffect(() => {
+    if (cooldownRemaining <= 0) return;
+
+    const timer = setInterval(() => {
+      setCooldownRemaining((prev) => {
+        if (prev <= 1) {
+          clearInterval(timer);
+          // Cooldown finished: Release the processing lock
+          isProcessingRef.current = false;
+          
+          // Auto-resume camera scanning dynamically only if the scan came from the camera
+          if (wasCameraScanRef.current && activeTab === "scanner") {
+            console.log(`[Cooldown Finished] Auto-resuming scanner frame detection.`);
+            setValidationState("idle");
+            startCameraScan();
+          }
+          return 0;
+        }
+        return prev - 1;
+      });
+    }, 1000);
+
+    return () => clearInterval(timer);
+  }, [cooldownRemaining, activeTab]);
 
   // Refs for Scanner
   const html5QrCodeRef = useRef<Html5Qrcode | null>(null);
@@ -807,10 +886,36 @@ export default function App() {
     if (activeTab !== "scanner") {
       stopCameraScan();
     }
-  }, [activeTab]);
-
-  // Handle Scan Outcome
+  }, [activeTab]);  // Handle Scan Outcome
   const onSuccessfulQRCodeScan = async (ticketCode: string) => {
+    const now = Date.now();
+    const cleanCode = ticketCode.trim();
+
+    // 1. Prevent multiple requests while a scan is actively being processed (Processing Lock)
+    if (isProcessingRef.current) {
+      console.log(`[Scan ignored] QR detected: "${cleanCode}", but another ticket verify request is already active (Processing Lock).`);
+      return;
+    }
+
+    // 2. Prevent race conditions and identical repeat scans in the cooldown window
+    const elapsed = now - lastScanTimeRef.current;
+    const cooldownMs = cooldownSeconds * 1000;
+
+    if (cleanCode === lastScannedQRRef.current && elapsed < cooldownMs) {
+      const secondsLeft = ((cooldownMs - elapsed) / 1000).toFixed(1);
+      console.log(`[Scan ignored due to cooldown] QR detected: "${cleanCode}", but it matches previous scan and cooldown still has ${secondsLeft}s remaining.`);
+      return;
+    }
+
+    // Capture scanning intent
+    console.log(`[QR detected] Decoded string: "${cleanCode}".`);
+
+    // Acquire lock and update trace
+    isProcessingRef.current = true;
+    wasCameraScanRef.current = true;
+    lastScannedQRRef.current = cleanCode;
+    lastScanTimeRef.current = now;
+
     // Vibrate device briefly for tactile feedback if supported
     if ("vibrate" in navigator) {
       try {
@@ -818,16 +923,27 @@ export default function App() {
       } catch (e) {}
     }
 
-    // Stop scan immediately after successful code extraction
+    // Stop scan immediately after successful code extraction to prevent frame overflow
+    console.log("[Camera] Pausing camera lens during API verification and cooldown.");
     await stopCameraScan();
     
-    setScannedResultCode(ticketCode);
-    processTicketVerification(ticketCode, false);
+    setScannedResultCode(cleanCode);
+    await processTicketVerification(cleanCode, false);
   };
 
   // Process Verification with Google Sheet Apps Script Single Source of Truth API
   const processTicketVerification = async (ticketCode: string, isManualInput: boolean = scanResult?.isManual || false) => {
     const formattedCode = ticketCode.trim();
+    if (!formattedCode) return;
+
+    // Ensure we hold the lock on manual inputs or file uploads as well
+    isProcessingRef.current = true;
+    if (isManualInput) {
+      wasCameraScanRef.current = false;
+      lastScannedQRRef.current = formattedCode;
+      lastScanTimeRef.current = Date.now();
+    }
+
     setValidationState("validating");
 
     // Split the QR string by "|"
@@ -876,6 +992,8 @@ export default function App() {
 
     const targetUrl = scriptUrl || "https://script.google.com/macros/s/AKfycby1rbBYT2vUVUDJChRRwe4lipjLqxur1OQfCCCfKF0uaNT3gl8NlXzIIQhgotxZuenw/exec";
 
+    console.log(`[API request sent] Dispatching check-in request. Ticket: "${ticketNoPart}", Tab: "${tabNamePart}", Event: "${eventCodePart}"`);
+
     let response;
     try {
       try {
@@ -920,7 +1038,7 @@ export default function App() {
       }
 
       const resData = await response.json();
-      console.log("Verified response from Google Sheet API:", resData);
+      console.log(`[API response received] Payload returned from server.`, resData);
 
       // Current timestamp fallback format
       const currentTime = new Date().toLocaleTimeString('en-US', {
@@ -950,6 +1068,7 @@ export default function App() {
                            ));
 
       if (isValid) {
+        console.log(`[Scan outcome] APPROVED - Entry granted for ticket "${respTicketNo}". Initiating ${cooldownSeconds}s cooldown.`);
         setValidationState("success");
         setValidationDetails({
           name: guestName || "Guest",
@@ -959,7 +1078,11 @@ export default function App() {
           time: respCheckInTime,
           status: "APPROVED"
         });
+        
+        // Start cooldown!
+        setCooldownRemaining(cooldownSeconds);
       } else if (isAlreadyUsed) {
+        console.log(`[Scan outcome] USED - Ticket "${respTicketNo}" was checked in previously at "${respCheckInTime}". Initiating ${cooldownSeconds}s cooldown.`);
         setValidationState("already_used");
         setValidationDetails({
           name: guestName || "Guest",
@@ -969,7 +1092,11 @@ export default function App() {
           time: respCheckInTime,
           status: "USED"
         });
+        
+        // Start cooldown!
+        setCooldownRemaining(cooldownSeconds);
       } else {
+        console.log(`[Scan outcome] INVALID - Ticket Code "${respTicketNo}" is invalid or failed. Reason: ${resData.reason || resData.message}`);
         setValidationState("not_found");
         setValidationDetails({
           name: guestName || "",
@@ -980,6 +1107,9 @@ export default function App() {
           status: "INVALID",
           reason: resData.reason || resData.message || "Ticket not found or custom spreadsheet header mismatch."
         });
+        
+        // Release lock immediately on failed lookup so they can try again / type manually
+        isProcessingRef.current = false;
       }
     } catch (err: any) {
       console.warn("Spreadsheet API call encountered an issue:", err);
@@ -987,6 +1117,9 @@ export default function App() {
       setValidationDetails({
         errorMessage: "CORS / Network Blocked: Make sure your Google Sheet Apps Script is deployed as a Web App, executes as 'Me', has Access set to 'Anyone', and that you are connected to the internet."
       });
+      
+      // Release lock on exception to prevent being frozen
+      isProcessingRef.current = false;
     }
   };
 
@@ -1250,6 +1383,22 @@ export default function App() {
                         )}
                       </div>
 
+                      {/* Cool Animated Cooldown Indicator Bar */}
+                      {cooldownRemaining > 0 && (
+                        <div className="w-full mt-4 bg-zinc-950 border border-zinc-900 p-2.5 rounded-xl space-y-1">
+                          <div className="flex justify-between items-center text-[9px] font-mono uppercase tracking-wider text-emerald-400">
+                            <span>Camera paused - Cooldown active</span>
+                            <span className="font-bold">{cooldownRemaining}s remaining</span>
+                          </div>
+                          <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden">
+                            <div 
+                              className="bg-emerald-400 h-full rounded-full transition-all duration-300 ease-out shadow-[0_0_8px_rgba(52,211,153,0.5)]"
+                              style={{ width: `${(cooldownRemaining / cooldownSeconds) * 100}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      )}
+
                     </div>
 
                     <button 
@@ -1257,9 +1406,16 @@ export default function App() {
                         setValidationState("idle"); 
                         startCameraScan();
                       }}
-                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs tracking-widest uppercase py-3 rounded-xl font-bold cursor-pointer transition-all shrink-0 shadow-lg shadow-emerald-900/30"
+                      className="w-full bg-emerald-600 hover:bg-emerald-500 text-white font-mono text-xs tracking-widest uppercase py-3 rounded-xl font-bold cursor-pointer transition-all shrink-0 shadow-lg shadow-emerald-900/30 flex justify-center items-center gap-2"
                     >
-                      DISMISS & SCAN NEXT
+                      {cooldownRemaining > 0 ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>AUTO-RESUMING IN {cooldownRemaining}S</span>
+                        </>
+                      ) : (
+                        "DISMISS & SCAN NEXT"
+                      )}
                     </button>
                   </div>
                 )}
@@ -1328,6 +1484,22 @@ export default function App() {
                         </div>
                       </div>
 
+                      {/* Duplicate Scan Lockout status bar */}
+                      {cooldownRemaining > 0 && (
+                        <div className="w-full mt-4 bg-zinc-950 border border-zinc-900 p-2.5 rounded-xl space-y-1">
+                          <div className="flex justify-between items-center text-[9px] font-mono uppercase tracking-wider text-red-400">
+                            <span>Lockout active - Anti-repeat lock</span>
+                            <span className="font-bold">{cooldownRemaining}s remaining</span>
+                          </div>
+                          <div className="w-full bg-zinc-900 h-1.5 rounded-full overflow-hidden">
+                            <div 
+                              className="bg-red-500 h-full rounded-full transition-all duration-300 ease-out shadow-[0_0_8px_rgba(239,68,68,0.5)]"
+                              style={{ width: `${(cooldownRemaining / cooldownSeconds) * 100}%` }}
+                            ></div>
+                          </div>
+                        </div>
+                      )}
+
                     </div>
 
                     <button 
@@ -1335,9 +1507,16 @@ export default function App() {
                         setValidationState("idle"); 
                         startCameraScan();
                       }}
-                      className="w-full bg-red-950/70 hover:bg-red-900/60 border border-red-800 text-stone-200 font-mono text-xs tracking-widest uppercase py-3 rounded-xl font-bold cursor-pointer transition-all shrink-0"
+                      className="w-full bg-red-950/70 hover:bg-red-900/60 border border-red-800 text-stone-200 font-mono text-xs tracking-widest uppercase py-3 rounded-xl font-bold cursor-pointer transition-all shrink-0 flex justify-center items-center gap-2"
                     >
-                      TRY ORIGINAL CODE AGAIN
+                      {cooldownRemaining > 0 ? (
+                        <>
+                          <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                          <span>AUTO-RESUMING IN {cooldownRemaining}S</span>
+                        </>
+                      ) : (
+                        "TRY ORIGINAL CODE AGAIN"
+                      )}
                     </button>
                   </div>
                 )}
@@ -2000,6 +2179,27 @@ export default function App() {
                   </span>
                 </div>
 
+                <div>
+                  <label className="text-[10px] font-mono uppercase text-zinc-500 block mb-1">
+                    Scan Cooldown Period
+                  </label>
+                  <select
+                    id="conf-cooldown-seconds"
+                    defaultValue={cooldownSeconds}
+                    className="w-full bg-black border border-zinc-800 text-stone-200 text-xs px-2.5 py-2 rounded-lg focus:outline-none focus:border-zinc-500 font-mono uppercase tracking-wider text-amber-500 font-bold text-[11px]"
+                  >
+                    <option value={3}>3 Seconds Cooldown</option>
+                    <option value={4}>4 Seconds Cooldown</option>
+                    <option value={5}>5 Seconds Cooldown</option>
+                    <option value={6}>6 Seconds Cooldown</option>
+                    <option value={8}>8 Seconds Cooldown</option>
+                    <option value={10}>10 Seconds Cooldown</option>
+                  </select>
+                  <span className="text-[8px] text-zinc-600 block mt-1 tracking-wider leading-relaxed">
+                    Pause duration after a successful lock scan before the lens resumes. Repeats of the same ticket will be strictly blocked during this threshold.
+                  </span>
+                </div>
+
                 {/* SAVE BUTTON */}
                 <button
                   onClick={() => {
@@ -2008,12 +2208,15 @@ export default function App() {
                     const elSheet = (document.getElementById("conf-sheet-id") as HTMLInputElement)?.value;
                     const elUrl = (document.getElementById("conf-script-url") as HTMLInputElement)?.value;
                     const elFallbackTab = (document.getElementById("conf-fallback-tab-name") as HTMLInputElement)?.value;
+                    const elCooldown = parseInt((document.getElementById("conf-cooldown-seconds") as HTMLSelectElement)?.value || "4", 10);
+                    
                     saveConfiguration(
                       elName || "THE HOUSE OF CONNECTIONS Event",
                       elCode || "STRANGER-2026",
                       elSheet || "",
                       elUrl || "",
-                      elFallbackTab || "Stranger_People"
+                      elFallbackTab || "Stranger_People",
+                      elCooldown
                     );
                   }}
                   className="w-full bg-white hover:bg-stone-200 text-black font-mono text-xs tracking-widest uppercase font-bold text-center py-2.5 rounded-lg border border-transparent mt-2 cursor-pointer transition-all"
