@@ -187,27 +187,27 @@ const GOOGLE_APPS_SCRIPT_CODE = `function doPost(e) {
           ticketCol = i;
         }
       }
-      if (statusCol === -1) {
+      if (statusCol === -1 && i !== ticketCol) {
         if (hAlpha === "used" || hAlpha === "checkin" || hAlpha === "attended" || hAlpha === "present" || hAlpha === "arrived") {
           statusCol = i;
         }
       }
-      if (eventCodeCol === -1) {
+      if (eventCodeCol === -1 && i !== ticketCol) {
         if (hAlpha === "codeid") {
           eventCodeCol = i;
         }
       }
-      if (checkInCol === -1) {
+      if (checkInCol === -1 && i !== ticketCol) {
         if (hAlpha === "checkin" || hAlpha === "time" || hAlpha === "timestamp") {
           checkInCol = i;
         }
       }
-      if (eventCol === -1) {
+      if (eventCol === -1 && i !== ticketCol) {
         if (hAlpha === "event") {
           eventCol = i;
         }
       }
-      if (nameCol === -1) {
+      if (nameCol === -1 && i !== ticketCol) {
         if (hAlpha === "name" || hAlpha === "guest" || hAlpha === "nama" || hAlpha === "customer" || hAlpha === "client" || hAlpha === "attendee") {
           nameCol = i;
         }
@@ -461,7 +461,13 @@ export default function App() {
     return localStorage.getItem("thoc_fallback_tab_name") || "Stranger_People";
   });
 
-  const [constructorTabName, setConstructorTabName] = useState<string>("Stranger_People");
+  const [constructorTabName, setConstructorTabName] = useState<string>(() => {
+    return localStorage.getItem("thoc_fallback_tab_name") || "Stranger_People";
+  });
+
+  const [constructorEventCode, setConstructorEventCode] = useState<string>(() => {
+    return localStorage.getItem("thoc_event_code") || "STRANGER-2026";
+  });
 
   const [fetchedSheetTabs, setFetchedSheetTabs] = useState<string[]>(() => {
     try {
@@ -558,6 +564,8 @@ export default function App() {
     setSheetId(cleanSheetId);
     setScriptUrl(scriptUrlVal.trim());
     setFallbackTabName(fallbackTabVal.trim());
+    setConstructorTabName(fallbackTabVal.trim());
+    setConstructorEventCode(codeVal.trim());
     
     showToastNotification("Configuration Saved Directly");
   };
@@ -1060,11 +1068,27 @@ export default function App() {
 
       // Handle exact response mappings defined in instructions & user's script
       const isValid = resData.valid === true || resData.success === true;
-      const isAlreadyUsed = resData.reason === "already_used" || 
+      const resError = String(resData.error || "").toLowerCase();
+      const resReason = String(resData.reason || "").toLowerCase();
+      const resStatus = String(resData.status || "").toLowerCase();
+      const msgLower = String(resData.message || "").toLowerCase();
+      
+      const isAlreadyUsed = resReason === "already_used" || 
+                           resReason === "already_checked_in" ||
+                           resError === "already_used" ||
                            (!isValid && (
-                             String(resData.status || "").toUpperCase() === "USED" || 
-                             String(resData.status || "").toLowerCase().includes("use") || 
-                             String(resData.reason || "").toLowerCase().includes("use")
+                             resStatus === "used" || 
+                             resStatus === "checked in" || 
+                             resStatus.includes("use") || 
+                             resStatus.includes("check") || 
+                             resReason.includes("use") ||
+                             resReason.includes("check") ||
+                             resError.includes("use") ||
+                             resError.includes("check") ||
+                             msgLower.includes("already") ||
+                             msgLower.includes("used") ||
+                             msgLower.includes("scanned") ||
+                             msgLower.includes("checked")
                            ));
 
       if (isValid) {
@@ -1137,7 +1161,8 @@ export default function App() {
     for (let i = 0; i < 8; i++) {
       randomStr += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    setInputTicket(`THOC-${randomStr}`);
+    const prefix = constructorEventCode ? constructorEventCode.split('-')[0].toUpperCase() : "THOC";
+    setInputTicket(`${prefix}-${randomStr}`);
   };
 
   const handleGenerateQR = async () => {
@@ -1154,7 +1179,7 @@ export default function App() {
     
     try {
       // Encode with standard luxury triple segment format: EVENT_CODE|TAB_NAME|TICKET_NUMBER
-      const qrDataString = `${eventCode.trim()}|${constructorTabName.trim()}|${formatted}`;
+      const qrDataString = `${constructorEventCode.trim()}|${constructorTabName.trim()}|${formatted}`;
 
       const dataUrl = await QRCode.toDataURL(qrDataString, {
         width: 380,
@@ -1239,7 +1264,7 @@ export default function App() {
               </div>
 
               {/* LIVE CAMERA VIEWFRAME */}
-              <div className="relative aspect-square w-full rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden flex flex-col items-center justify-center group">
+              <div className={`relative w-full rounded-2xl border border-zinc-800 bg-zinc-950 overflow-hidden flex flex-col items-center justify-center group ${(validationState === "idle" || validationState === "validating") ? "aspect-square" : ""}`}>
                 
                 {/* Visual Target Reticle (Always on screen if checking) */}
                 {isScanning && (
@@ -1321,8 +1346,8 @@ export default function App() {
                 
                  {/* A. SUCCESS: GREEN CARD */}
                  {validationState === "success" && (
-                  <div className="absolute inset-0 bg-black z-30 flex flex-col p-5 border-2 border-emerald-500 rounded-2xl overflow-y-auto">
-                    <div className="flex-1 flex flex-col justify-center items-center text-center min-h-0">
+                  <div className="w-full bg-black z-30 flex flex-col p-5 border-2 border-emerald-500 rounded-2xl relative">
+                    <div className="flex-1 flex flex-col justify-center items-center text-center">
                       
                       <div className="w-14 h-14 bg-emerald-950/60 border border-emerald-500/40 rounded-full flex items-center justify-center mb-3 animate-bounce shadow-[0_0_15px_rgba(16,185,129,0.3)]">
                         <CheckCircle2 className="w-9 h-9 text-emerald-400" />
@@ -1422,8 +1447,8 @@ export default function App() {
 
                  {/* B. BLOCKED/ALREADY USED: RED CARD */}
                  {validationState === "already_used" && (
-                  <div className="absolute inset-0 bg-black z-30 flex flex-col p-5 border-2 border-red-500 rounded-2xl overflow-y-auto">
-                    <div className="flex-1 flex flex-col justify-center items-center text-center min-h-0">
+                  <div className="w-full bg-black z-30 flex flex-col p-5 border-2 border-red-500 rounded-2xl relative">
+                    <div className="flex-1 flex flex-col justify-center items-center text-center">
                       
                       <div className="w-14 h-14 bg-red-950/60 border border-red-500/40 rounded-full flex items-center justify-center mb-3 animate-pulse shadow-[0_0_15px_rgba(239,68,68,0.3)]">
                         <XCircle className="w-9 h-9 text-red-500" />
@@ -1523,8 +1548,8 @@ export default function App() {
 
                  {/* C. NOT FOUND / INVALID: RED CARD */}
                  {validationState === "not_found" && (
-                  <div className="absolute inset-0 bg-black z-30 flex flex-col p-5 border-2 border-red-500 rounded-2xl overflow-y-auto">
-                    <div className="flex-1 flex flex-col justify-center items-center text-center min-h-0">
+                  <div className="w-full bg-black z-30 flex flex-col p-5 border-2 border-red-500 rounded-2xl relative">
+                    <div className="flex-1 flex flex-col justify-center items-center text-center">
                       
                       <div className="w-14 h-14 bg-red-950/60 border border-red-500/40 rounded-full flex items-center justify-center mb-3 animate-bounce">
                         <AlertTriangle className="w-9 h-9 text-red-500" />
@@ -1565,7 +1590,7 @@ export default function App() {
 
                 {/* D. ERROR OVERLAY */}
                 {validationState === "error" && (
-                  <div className="absolute inset-0 bg-zinc-950 z-30 flex flex-col p-5 border border-zinc-800 rounded-2xl overflow-y-auto">
+                  <div className="w-full bg-zinc-950 z-30 flex flex-col p-5 border border-zinc-800 rounded-2xl relative">
                     <div className="flex-1 flex flex-col justify-center items-center text-center">
                       <div className="w-12 h-12 bg-red-950/40 border border-red-900/40 rounded-full flex items-center justify-center mb-3">
                         <AlertTriangle className="w-6 h-6 text-red-400" />
@@ -1789,6 +1814,19 @@ export default function App() {
                 
                 <div>
                   <label className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase block mb-1">
+                    Event Code Scope Prefix <span className="text-red-500/80">*</span>
+                  </label>
+                  <input
+                    type="text"
+                    value={constructorEventCode}
+                    onChange={(e) => setConstructorEventCode(e.target.value)}
+                    placeholder="e.g. STRANGER-2026"
+                    className="w-full bg-zinc-950 border border-zinc-900 rounded-lg px-3 py-2 text-xs font-mono tracking-wider text-amber-500 font-bold focus:outline-none focus:border-zinc-700 uppercase"
+                  />
+                </div>
+
+                <div>
+                  <label className="text-[10px] font-mono tracking-widest text-zinc-500 uppercase block mb-1">
                     Guest Name <span className="text-zinc-700">(Optional Ticket Card Label)</span>
                   </label>
                   <div className="relative">
@@ -1859,8 +1897,8 @@ export default function App() {
                     Strict Ticket Number <span className="text-red-500/80">*</span>
                   </label>
                   
-                  <div className="flex gap-2">
-                    <div className="relative flex-1">
+                  <div className="flex flex-col gap-2">
+                    <div className="relative w-full">
                       <input 
                         type="text"
                         placeholder="e.g. THOC-aB3d5Fg"
@@ -1868,7 +1906,8 @@ export default function App() {
                         onChange={(e) => setInputTicket(e.target.value)}
                         onBlur={() => {
                           const val = inputTicket.trim();
-                          if (val && val !== "THOC-") {
+                          const prefix = constructorEventCode ? constructorEventCode.split('-')[0].toUpperCase() + "-" : "THOC-";
+                          if (val && val !== prefix) {
                             handlePullNameFromSpreadsheet(val, true);
                           }
                         }}
@@ -1878,35 +1917,37 @@ export default function App() {
                             handlePullNameFromSpreadsheet(inputTicket, false);
                           }
                         }}
-                        className="w-full bg-zinc-950 border border-zinc-900 rounded-lg px-3 py-2 text-xs font-mono text-white tracking-widest placeholder:text-zinc-700 pr-8 focus:outline-none focus:border-zinc-700 text-center"
+                        className="w-full bg-zinc-950 border border-zinc-900 rounded-lg px-4 py-3 text-lg sm:text-xl font-mono text-white tracking-widest placeholder:text-zinc-700 focus:outline-none focus:border-zinc-700 text-center uppercase"
                         maxLength={20}
                       />
                     </div>
                     
-                    <button
-                      onClick={() => handlePullNameFromSpreadsheet(inputTicket, false)}
-                      disabled={isSyncingName}
-                      className="bg-amber-950/30 hover:bg-amber-900/40 text-amber-500 font-mono text-xs px-2.5 py-2 rounded-lg border border-amber-900/40 flex items-center gap-1.5 shrink-0 font-medium active:scale-95 disabled:opacity-50 transition-all cursor-pointer"
-                      title="Look up and pull the Guest Name from the spreadsheet roster matching this Ticket number."
-                    >
-                      {isSyncingName ? (
-                        <RefreshCw className="w-3 w-3 animate-spin" />
-                      ) : (
-                        <Database className="w-3 w-3" />
-                      )}
-                      Fetch Name
-                    </button>
+                    <div className="flex gap-2">
+                      <button
+                        onClick={() => handlePullNameFromSpreadsheet(inputTicket, false)}
+                        disabled={isSyncingName}
+                        className="flex-1 bg-amber-950/30 hover:bg-amber-900/40 text-amber-500 font-mono text-xs px-2.5 py-2 rounded-lg border border-amber-900/40 flex items-center justify-center gap-1.5 font-medium active:scale-95 disabled:opacity-50 transition-all cursor-pointer"
+                        title="Look up and pull the Guest Name from the spreadsheet roster matching this Ticket number."
+                      >
+                        {isSyncingName ? (
+                          <RefreshCw className="w-3 h-3 animate-spin" />
+                        ) : (
+                          <Database className="w-3 h-3" />
+                        )}
+                        Fetch Name
+                      </button>
 
-                    <button
-                      onClick={generateRandomTicketCode}
-                      className="bg-zinc-900 hover:bg-zinc-800 text-stone-300 font-mono text-xs px-2.5 py-2 rounded-lg border border-zinc-800 flex items-center gap-1 shrink-0 font-medium active:scale-95 transition-all"
-                      title="Generate a randomized ticket number containing capital, small, and digital characters."
-                    >
-                      <RefreshCw className="w-3 w-3 text-zinc-400" />
-                      Auto Rand
-                    </button>
+                      <button
+                        onClick={generateRandomTicketCode}
+                        className="flex-1 bg-zinc-900 hover:bg-zinc-800 text-stone-300 font-mono text-xs px-2.5 py-2 rounded-lg border border-zinc-800 flex items-center justify-center gap-1 font-medium active:scale-95 transition-all cursor-pointer"
+                        title="Generate a randomized ticket number containing capital, small, and digital characters."
+                      >
+                        <RefreshCw className="w-3 h-3 text-zinc-400" />
+                        Auto Rand
+                      </button>
+                    </div>
                   </div>
-                  <span className="text-[9px] font-mono text-zinc-600 block mt-1 tracking-wider">
+                  <span className="text-[9px] font-mono text-zinc-600 block mt-2 tracking-wider leading-relaxed">
                     Must be 7 to 20 characters containing any combination of capital, small, and digital characters (e.g. mixed-case and numbers).
                   </span>
                 </div>
@@ -1955,7 +1996,7 @@ export default function App() {
                     <div className="flex justify-between">
                       <span className="text-zinc-500">Event Code:</span>
                       <span className="text-amber-500 font-bold text-right tracking-widest">
-                        {eventCode}
+                        {constructorEventCode}
                       </span>
                     </div>
                     <div className="flex justify-between">
@@ -1979,7 +2020,7 @@ export default function App() {
                     <div className="flex flex-col text-left gap-1 border-t border-zinc-900 pt-2 text-[9px]">
                       <span className="text-zinc-600 block uppercase font-bold tracking-wider">Raw QR Data String:</span>
                       <span className="text-amber-500 font-bold break-all font-mono tracking-widest">
-                        {eventCode}|{constructorTabName}|{inputTicket}
+                        {constructorEventCode}|{constructorTabName}|{inputTicket}
                       </span>
                     </div>
                   </div>
