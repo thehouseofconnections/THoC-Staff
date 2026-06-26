@@ -1161,7 +1161,7 @@ export default function App() {
     for (let i = 0; i < 8; i++) {
       randomStr += chars.charAt(Math.floor(Math.random() * chars.length));
     }
-    const prefix = constructorEventCode ? constructorEventCode.split('-')[0].toUpperCase() : "THOC";
+    const prefix = constructorEventCode ? constructorEventCode.split('-')[0] : "THOC";
     setInputTicket(`${prefix}-${randomStr}`);
   };
 
@@ -1821,7 +1821,7 @@ export default function App() {
                     value={constructorEventCode}
                     onChange={(e) => setConstructorEventCode(e.target.value)}
                     placeholder="e.g. STRANGER-2026"
-                    className="w-full bg-zinc-950 border border-zinc-900 rounded-lg px-3 py-2 text-xs font-mono tracking-wider text-amber-500 font-bold focus:outline-none focus:border-zinc-700 uppercase"
+                    className="w-full bg-zinc-950 border border-zinc-900 rounded-lg px-3 py-2 text-xs font-mono tracking-wider text-amber-500 font-bold focus:outline-none focus:border-zinc-700"
                   />
                 </div>
 
@@ -1906,7 +1906,7 @@ export default function App() {
                         onChange={(e) => setInputTicket(e.target.value)}
                         onBlur={() => {
                           const val = inputTicket.trim();
-                          const prefix = constructorEventCode ? constructorEventCode.split('-')[0].toUpperCase() + "-" : "THOC-";
+                          const prefix = constructorEventCode ? constructorEventCode.split('-')[0] + "-" : "THOC-";
                           if (val && val !== prefix) {
                             handlePullNameFromSpreadsheet(val, true);
                           }
@@ -1917,7 +1917,7 @@ export default function App() {
                             handlePullNameFromSpreadsheet(inputTicket, false);
                           }
                         }}
-                        className="w-full bg-zinc-950 border border-zinc-900 rounded-lg px-4 py-3 text-lg sm:text-xl font-mono text-white tracking-widest placeholder:text-zinc-700 focus:outline-none focus:border-zinc-700 text-center uppercase"
+                        className="w-full bg-zinc-950 border border-zinc-900 rounded-lg px-4 py-3 text-lg sm:text-xl font-mono text-white tracking-widest placeholder:text-zinc-700 focus:outline-none focus:border-zinc-700 text-center"
                         maxLength={20}
                       />
                     </div>
